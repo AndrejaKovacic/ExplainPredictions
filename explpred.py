@@ -6,7 +6,7 @@ import random
 
 class ExplainPredictions(object):
     """
-    Class used to explain individual predictions made on our data. All interactions between atributes are accounted by calculating Shapely value.
+    Class used to explain individual predictions by determining the importance of attribute values. All interactions between atributes are accounted for by calculating Shapely value.
     Parameters:
 
     model : 
@@ -26,6 +26,8 @@ class ExplainPredictions(object):
     minIter : int
         minimum number of iterations per attirubte
 
+    Return: 
+        array dimensions numInstancesToPredict * numAttributes. Field i,j is Shapely value for i-th instance, value of j-th atribute.
 
     """
 
@@ -117,7 +119,6 @@ class ExplainPredictions(object):
     
         return expl 
         
-
 
 
 
