@@ -118,7 +118,28 @@ class ExplainPredictions(object):
 
     
         return expl 
+
+
+def analyse_xor(num_inst_to_pred = 10, print = False):
+    X = np.random.choice([1,0], (10000,2))
+    Y = np.logical_xor(X[:,0], X[:,1])*1
+    clf = RandomForestClassifier(max_depth=10, max_features = None)
+    model = clf.fit(X,Y)
+    e = ExplainPredictions(model, X, Y)
+    ofile = open("./xor_est.csv", "w")
+    writer = csv.writer(ofile)
+    shapely_v = e.expl_one_atr(X[:num_inst_to_pred])
+    if print:
+        for row in shapely_v:
+            writer.writerow(row)
+        ofile.close()
         
+
+    
+from sklearn.ensemble import RandomForestClassifier   
+import csv
+if __name__ == "__main__":
+        analyse_xor(print=True)
 
 
 
