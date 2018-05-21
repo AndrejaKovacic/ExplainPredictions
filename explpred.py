@@ -1,7 +1,7 @@
 import numpy as np
 import scipy.stats as st
 import random
-
+import time
 
 
 class ExplainPredictions(object):
@@ -33,7 +33,7 @@ class ExplainPredictions(object):
 
 
 
-    def __init__(self, model, data, target, pError= 0.01, error = 0.01, batchSize = 50, maxIter = 10000, minIter = 1000):
+    def __init__(self, model, data, target, pError= 0.01, error = 0.01, batchSize = 50, maxIter = 20000, minIter = 1000):
         
         self.model = model
         self.data = data
@@ -43,7 +43,6 @@ class ExplainPredictions(object):
         self.batchSize = batchSize
         self.maxIter = maxIter
         self.minIter = minIter
-
 
     def prepare(self, instances):
         """
@@ -60,76 +59,94 @@ class ExplainPredictions(object):
  
 
 
-    def expl_one_atr(self, instances):
-        """
-        Calculates which attributes are most important in classification of given instance, one attribute at the time.
+    def set_data(self, data, target):
+        self.data = data
+        self.target = target
 
-        Parameters: 
-        instances - array of instances for which we want to obtain predictions
-        """
+    def set_params(self, pError = 0.01, error = 0.01, batchSize = 50, maxIter = 10000, minIter = 1000):
+        self.pError = pError
+        self.error = error
+        self.batchSize = batchSize
+        self.maxIter = maxIter
+        self.minIter = minIter
+
+
+    def anytime_explain(self, instances):
+    
         instances = self.prepare(instances)
         noClasses = np.unique(self.target).size 
         dataRows, noAtr = self.data.shape
         numInst = len(instances)
     
-        #placeholders
+        #placeholders : steps, mean, sum of squared differences, calcuated contribuitons
+        steps = np.zeros((1, noAtr), dtype = float)
+        mu = np.zeros((1, noAtr), dtype = float)
+        M2 = np.zeros((1, noAtr), dtype = float)
         expl = np.zeros((numInst, noAtr), dtype = float)
-        stddev = np.zeros((numInst, noAtr), dtype = float)   
+        var = np.ones((1, noAtr), dtype = float)
+        atr_indices = np.ones((1, noAtr), dtype = int)
+
+        atr_indices[0] = np.asarray(range(noAtr))
+        tiled_inst = np.tile(instances,(self.batchSize,1))
         batchMxSize = self.batchSize * noAtr
-        #absolute value of z score of p-th quantile in normal distribution
         zSq = abs(st.norm.ppf(self.pError/2))**2
+        i = 0
 
-        errSq = self.error**2
-        
-        for i in range(numInst):
-            inst = instances[i, :]
-            tiled_inst = np.tile(inst,(self.batchSize,1))
-            for a in range(noAtr):
-                noIter = 0
-                moreIterations = True
-                while(moreIterations ):
-                    perm = np.random.choice([True, False], batchMxSize, replace=True)
-                    perm = np.reshape(perm, (self.batchSize, noAtr)) 
-                    rand_data = self.data[random.sample(range(dataRows), k=self.batchSize),:]
-                    inst1 = np.copy(tiled_inst)
-                    inst1[perm] = rand_data[perm]
-                    inst1[:, a]  = tiled_inst[:,a]
-                    inst2 = np.copy(tiled_inst)
-                    inst2[perm] = rand_data[perm]
-                    inst2[:, a] = rand_data[:, a]
+        while any(steps[0] < self.minIter):
+            if (all(steps[0] < self.minIter)):
+                a = np.random.choice(atr_indices[0], p=(var[0]/(sum(var[0]))))
+            else :
+                a = np.argmin(steps)
+            #as previously
+            perm = np.random.choice([True, False], batchMxSize, replace=True)
+            perm = np.reshape(perm, (self.batchSize, noAtr)) 
+            rand_data = self.data[random.sample(range(dataRows), k=self.batchSize),:]
+            inst1 = np.copy(tiled_inst)
+            inst1[perm] = rand_data[perm]
+            inst2 = np.copy(inst1)
+
+            #inst2 = np.copy(tiled_inst)
+            #inst2[perm] = rand_data[perm]
+            inst1[:, a]  = tiled_inst[:,a]
+            inst2[:, a] = rand_data[:, a]
                 
-                    f1 = self.model.predict(inst1)
-                    f2 = self.model.predict(inst2)
-                    diff = f1 - f2
+            f1 = self.model.predict(inst1)
+            f2 = self.model.predict(inst2)
+            diff = sum(f1 - f2)
+            expl[i,a] += diff
 
-                    expl[i, a] += sum(diff)
-                    noIter += self.batchSize
-                    stddev[i, a] += diff.dot(diff)
-                    v2 = stddev[i, a]/noIter - (expl[i, a]/noIter)**2
-                    neededIter = zSq * v2 / errSq
-                    if (not noIter < self.minIter and (neededIter <= noIter or noIter > self.maxIter)):
-                        moreIterations = False
-                #print ("num iter " +  str(noIter))
-                #print ("expained " + str(inst[a]))
-                #print ("needed " + str(neededIter))
-                #print (expl[i,a] / noIter)
-                expl[i, a] /= noIter 
-                stddev[i, a] = np.sqrt(stddev[i, a] / noIter - expl[i, a]/noIter**2)
+            #update variance
+            steps[i,a] += self.batchSize
+            d  = diff - mu[i,a]
+            mu[i,a] += d/steps[i,a]
+            M2[i,a] += d*(diff - mu[i,a])
+            var[i,a] = M2[i,a] / (steps[i,a]-1)  
 
-    
-        return expl 
+            #exclude from sampling if necessary
+            neededIter = zSq * var[i,a]/ (self.error**2)
+            if neededIter <= steps[i,a]:
+               steps[i,a] = self.minIter
+
+        expl = expl/steps
+
+        return expl
 
 
-def analyse_xor(num_inst_to_pred = 10, print = False):
+
+
+
+def analyse_xor(num_inst_to_pred = 10, printT = False):
     X = np.random.choice([1,0], (10000,2))
     Y = np.logical_xor(X[:,0], X[:,1])*1
     clf = RandomForestClassifier(max_depth=10, max_features = None)
     model = clf.fit(X,Y)
     e = ExplainPredictions(model, X, Y)
     ofile = open("./xor_est.csv", "w")
-    writer = csv.writer(ofile)
-    shapely_v = e.expl_one_atr(X[:num_inst_to_pred])
-    if print:
+    writer = csv.writer(ofile) 
+    shapely_any = e.anytime_explain(np.asarray([1,1]))
+
+    print (shapely_any)
+    if printT:
         for row in shapely_v:
             writer.writerow(row)
         ofile.close()
@@ -139,7 +156,7 @@ def analyse_xor(num_inst_to_pred = 10, print = False):
 from sklearn.ensemble import RandomForestClassifier   
 import csv
 if __name__ == "__main__":
-        analyse_xor(print=True)
+        analyse_xor(printT=False)
 
 
 
